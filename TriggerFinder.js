@@ -3,7 +3,7 @@ import path from "path";
 
 const TRIGGER_SUFFIX = ".trigger.json";
 
-export class TriggerFinder {
+export default class TriggerFinder {
 	#dir;
 	#maxLevel;
 
