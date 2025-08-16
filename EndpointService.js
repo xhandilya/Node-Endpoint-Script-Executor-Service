@@ -1,6 +1,7 @@
 import cors from "cors";
 import express, { urlencoded, json } from "express";
 
+import ScriptExecutor from "./ScriptExecutor.js";
 import TriggerFinder from "./TriggerFinder.js";
 
 export default class EndpointService {
@@ -17,12 +18,23 @@ export default class EndpointService {
 		const triggers = triggerFinder.findTriggers();
 		const endpointTriggers = triggers.endpoint;
 		const methodEndpointMap = new Map();
+		const endpointSet = new Set();
 
 		endpointTriggers.forEach(endpointTrigger => {
-			if (!methodEndpointMap.has(endpointTrigger[0])) {
-				methodEndpointMap.set(endpointTrigger[0], []);
+			const endpointMethod = endpointTrigger[0];
+			const endpointPath = endpointTrigger[1];
+
+			if (!methodEndpointMap.has(endpointMethod)) {
+				methodEndpointMap.set(endpointMethod, []);
 			}
-			methodEndpointMap.get(endpointTrigger[0])?.push(endpointTrigger);
+			methodEndpointMap.get(endpointMethod)?.push(endpointTrigger);
+
+			// Check for duplicate endpoints, if any.
+			const endpointSignature = `${endpointMethod}:${endpointPath}`;
+			if (endpointSet.has(endpointSignature)) {
+				throw new Error(`Duplicate endpoint encountered "${endpointSignature}"`);
+			}
+			endpointSet.add(endpointSignature);
 		});
 
 		this.#endpointMethodBindingOrder.forEach(method => {
@@ -59,9 +71,11 @@ export default class EndpointService {
 	}
 
 	#bindEndpoint(endpointTrigger) {
+		const self = this;
 		const endpointMethod = endpointTrigger[0];
 		const endpointPath = endpointTrigger[1];
 		const script = endpointTrigger[2];
+		const endpointSignature = `${endpointMethod}:${endpointPath}`;
 
 		switch (endpointMethod) {
 			case "all":
@@ -87,7 +101,34 @@ export default class EndpointService {
 		}
 
 		async function invoke(req, res) {
-			console.debug(`Executing script ${script}`);
+			console.debug(`Invoking endpoint ${endpointSignature}`);
+			const startTime = Date.now();
+
+			const request = {
+				header: req.header,
+				query: req.query,
+				param: req.params,
+				body: req.body,
+				method: endpointMethod,
+				path: endpointPath,
+				url: req.originalUrl
+			}
+
+			const scriptExecutor = new ScriptExecutor(script, self.#config, request);
+			scriptExecutor.execute()
+				.then(output => {
+					res.status(output.response_code)
+						.type(output.content_type)
+						.send(output.content);
+				})
+				.catch(err => {
+					console.error(`Failed to execute "${endpointMethod}:${endpointPath}" >`, err);
+					res.status(500).end();
+				})
+				.finally(() => {
+					const elapsed = (Date.now() - startTime);
+					console.debug(`Endpoint ${endpointSignature} executed in ${elapsed} ms`);
+				});
 		}
 	}
 
